@@ -72,6 +72,13 @@ def generate_launch_description():
                 parameters=[sensor_config],
                 output="screen",
             ),
+            Node(
+                package="project3_sensors",
+                executable="dead_reckoning_guard",
+                name="dead_reckoning_guard",
+                parameters=[sensor_config],
+                output="screen",
+            ),
             # Let Gazebo publish clock and initial sensor samples before SVIn starts.
             TimerAction(period=2.0, actions=[stereo_sync, okvis]),
             Node(

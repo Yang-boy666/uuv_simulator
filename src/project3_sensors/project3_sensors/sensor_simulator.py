@@ -13,9 +13,9 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import TwistWithCovarianceStamped
 from nav_msgs.msg import Odometry
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import FluidPressure
 from std_msgs.msg import Bool, Float64
 
@@ -215,11 +215,11 @@ class SensorSimulator(Node):
 
 
 def main(args=None) -> None:
-    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    rclpy.init(args=args)
     node = SensorSimulator()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

@@ -33,6 +33,20 @@ camera_info_publisher:
     horizontal_fov: 1.3962634
     baseline: 0.12
 
+dead_reckoning_guard:
+  ros__parameters:
+    use_sim_time: true
+    dvl_topic: /dvl/velocity
+    imu_topic: /imu/data_raw
+    depth_topic: /depth/value
+    output_topic: /navigation/dead_reckoning
+    world_frame: world
+    body_frame: pipeline_uuv/base_link
+    initial_x: -8.5
+    initial_y: -5.0
+    initial_z: -4.0
+    initial_yaw: 0.0
+
 svin_odom_adapter:
   ros__parameters:
     use_sim_time: true
@@ -42,8 +56,9 @@ svin_odom_adapter:
     body_frame: pipeline_uuv/base_link
     health_topic: /svin_health
     require_tracking_health: true
-    fusion_reference_topic: /navigation/odom
-    reacquisition_gate_distance: 0.75
+    fusion_reference_topic: /navigation/dead_reckoning
+    reacquisition_gate_distance: 0.35
+    innovation_window_seconds: 10.0
     initial_x: -8.5
     initial_y: -5.0
     initial_z: -4.0

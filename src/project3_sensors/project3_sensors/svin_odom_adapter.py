@@ -9,9 +9,9 @@ import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry, Path
 from okvis_ros.msg import SvinHealth
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import Bool
 
 from .math_utils import (
@@ -31,8 +31,9 @@ class SvinOdomAdapter(Node):
         self.declare_parameter("body_frame", "pipeline_uuv/base_link")
         self.declare_parameter("health_topic", "/svin_health")
         self.declare_parameter("require_tracking_health", True)
-        self.declare_parameter("fusion_reference_topic", "/navigation/odom")
-        self.declare_parameter("reacquisition_gate_distance", 0.75)
+        self.declare_parameter("fusion_reference_topic", "/navigation/dead_reckoning")
+        self.declare_parameter("reacquisition_gate_distance", 0.35)
+        self.declare_parameter("innovation_window_seconds", 10.0)
         self.declare_parameter("initial_x", -8.5)
         self.declare_parameter("initial_y", -5.0)
         self.declare_parameter("initial_z", -4.0)
@@ -59,6 +60,9 @@ class SvinOdomAdapter(Node):
         self.ever_accepted = False
         self.reference_gate_armed = False
         self.latest_reference_position: Optional[np.ndarray] = None
+        self.reference_anchor: Optional[np.ndarray] = None
+        self.visual_anchor: Optional[np.ndarray] = None
+        self.anchor_stamp: Optional[float] = None
         self.innovation_rejected = False
 
         self.odom_pub = self.create_publisher(
@@ -150,23 +154,53 @@ class SvinOdomAdapter(Node):
         aligned_orientation = quaternion_multiply(q_alignment, source_orientation)
 
         if self.ever_accepted and self.latest_reference_position is not None:
-            innovation = float(
+            gate = float(self.get_parameter("reacquisition_gate_distance").value)
+            stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+            absolute_innovation = float(
                 np.linalg.norm(aligned_position - self.latest_reference_position)
             )
-            gate = float(self.get_parameter("reacquisition_gate_distance").value)
-            # Arm the innovation test only after the EKF has consumed the first
-            # accepted SVIn pose. This avoids rejecting the initial map offset.
-            if not self.reference_gate_armed and innovation <= gate:
+            # Arm only after both independently initialized trajectories agree.
+            if not self.reference_gate_armed and absolute_innovation <= gate:
                 self.reference_gate_armed = True
-            if self.reference_gate_armed and innovation > gate:
+                self.visual_anchor = aligned_position.copy()
+                self.reference_anchor = self.latest_reference_position.copy()
+                self.anchor_stamp = stamp
+
+            relative_innovation = 0.0
+            if (
+                self.reference_gate_armed
+                and self.visual_anchor is not None
+                and self.reference_anchor is not None
+            ):
+                visual_delta = aligned_position - self.visual_anchor
+                reference_delta = self.latest_reference_position - self.reference_anchor
+                relative_innovation = float(
+                    np.linalg.norm(visual_delta - reference_delta)
+                )
+
+            if self.reference_gate_armed and relative_innovation > gate:
                 self._publish_tracking_status(False)
                 if not self.innovation_rejected:
                     self.get_logger().warning(
-                        f"SVIn recovery rejected: position innovation {innovation:.2f} m "
+                        f"SVIn pose rejected: independent DR innovation "
+                        f"{relative_innovation:.2f} m "
                         f"> {gate:.2f} m"
                     )
                 self.innovation_rejected = True
                 return
+
+            # A short sliding window avoids comparing long-term DVL drift with
+            # long-term visual drift while retaining an independent local test.
+            window = float(self.get_parameter("innovation_window_seconds").value)
+            if (
+                self.reference_gate_armed
+                and not self.innovation_rejected
+                and self.anchor_stamp is not None
+                and stamp - self.anchor_stamp >= window
+            ):
+                self.visual_anchor = aligned_position.copy()
+                self.reference_anchor = self.latest_reference_position.copy()
+                self.anchor_stamp = stamp
 
         if not self.output_tracking_ok:
             self.get_logger().info("SVIn visual pose passed health/innovation gates")
@@ -208,11 +242,11 @@ class SvinOdomAdapter(Node):
 
 
 def main(args=None) -> None:
-    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    rclpy.init(args=args)
     node = SvinOdomAdapter()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

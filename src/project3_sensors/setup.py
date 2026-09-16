@@ -24,6 +24,7 @@ setup(
         "console_scripts": [
             "sensor_simulator = project3_sensors.sensor_simulator:main",
             "camera_info_publisher = project3_sensors.camera_info_publisher:main",
+            "dead_reckoning_guard = project3_sensors.dead_reckoning_guard:main",
             "svin_odom_adapter = project3_sensors.svin_odom_adapter:main",
             "navigation_evaluator = project3_sensors.navigation_evaluator:main",
         ],

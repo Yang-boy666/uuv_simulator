@@ -5,9 +5,9 @@ from __future__ import annotations
 import math
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from rclpy.signals import SignalHandlerOptions
 from sensor_msgs.msg import CameraInfo, Image
 
 
@@ -62,11 +62,11 @@ class CameraInfoPublisher(Node):
 
 
 def main(args=None) -> None:
-    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    rclpy.init(args=args)
     node = CameraInfoPublisher()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
