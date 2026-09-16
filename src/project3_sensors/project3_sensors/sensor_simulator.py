@@ -1,0 +1,227 @@
+"""Generate DVL and pressure-depth measurements from Gazebo ground truth.
+
+Ground truth is intentionally confined to this sensor model and the evaluator.
+Navigation nodes only consume the noisy standard sensor topics.
+"""
+
+from __future__ import annotations
+
+import math
+from typing import Optional
+
+import numpy as np
+import rclpy
+from geometry_msgs.msg import TwistWithCovarianceStamped
+from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from rclpy.signals import SignalHandlerOptions
+from sensor_msgs.msg import FluidPressure
+from std_msgs.msg import Bool, Float64
+
+from .math_utils import quaternion_conjugate, rotate_vector
+
+
+class SensorSimulator(Node):
+    def __init__(self) -> None:
+        super().__init__("sensor_simulator")
+        defaults = {
+            "ground_truth_topic": "/pipeline_uuv/odom",
+            "ground_truth_output_topic": "/ground_truth/odom",
+            "body_frame": "pipeline_uuv/base_link",
+            "world_frame": "world",
+            "dvl_rate": 10.0,
+            "dvl_velocity_noise_std": 0.003,
+            "dvl_bias_x": 0.0,
+            "dvl_bias_y": 0.0,
+            "dvl_bias_z": 0.0,
+            "dvl_dropout_probability": 0.01,
+            "dvl_bottom_lock_min_range": 0.20,
+            "dvl_bottom_lock_max_range": 2.0,
+            "pipe_floor_z": -4.60,
+            "depth_rate": 20.0,
+            "depth_noise_std": 0.01,
+            "depth_zero_bias": 0.02,
+            "depth_drift_std_per_sqrt_s": 0.0005,
+            "water_density": 1000.0,
+            "gravity": 9.80665,
+            "atmospheric_pressure": 101325.0,
+            "random_seed": 7,
+        }
+        for name, value in defaults.items():
+            self.declare_parameter(name, value)
+
+        self.rng = np.random.default_rng(int(self.get_parameter("random_seed").value))
+        self.latest_odom: Optional[Odometry] = None
+        self.previous_position: Optional[np.ndarray] = None
+        self.previous_stamp: Optional[float] = None
+        self.world_velocity = np.zeros(3, dtype=float)
+        self.depth_drift = 0.0
+
+        self.gt_pub = self.create_publisher(
+            Odometry, str(self.get_parameter("ground_truth_output_topic").value), 20
+        )
+        self.dvl_pub = self.create_publisher(
+            TwistWithCovarianceStamped, "/dvl/velocity", qos_profile_sensor_data
+        )
+        self.dvl_valid_pub = self.create_publisher(Bool, "/dvl/valid", 10)
+        self.depth_pub = self.create_publisher(
+            FluidPressure, "/depth", qos_profile_sensor_data
+        )
+        self.depth_value_pub = self.create_publisher(Float64, "/depth/value", 10)
+        self.depth_odom_pub = self.create_publisher(Odometry, "/depth/odom", 10)
+
+        self.create_subscription(
+            Odometry,
+            str(self.get_parameter("ground_truth_topic").value),
+            self._ground_truth_callback,
+            qos_profile_sensor_data,
+        )
+        self.create_timer(1.0 / float(self.get_parameter("dvl_rate").value), self._publish_dvl)
+        self.create_timer(1.0 / float(self.get_parameter("depth_rate").value), self._publish_depth)
+        self.get_logger().info(
+            "DVL/depth simulator ready; ground truth is isolated from navigation inputs"
+        )
+
+    @staticmethod
+    def _stamp_seconds(message: Odometry) -> float:
+        return float(message.header.stamp.sec) + 1.0e-9 * float(message.header.stamp.nanosec)
+
+    def _ground_truth_callback(self, message: Odometry) -> None:
+        position = np.array(
+            [
+                message.pose.pose.position.x,
+                message.pose.pose.position.y,
+                message.pose.pose.position.z,
+            ],
+            dtype=float,
+        )
+        stamp = self._stamp_seconds(message)
+        if self.previous_position is not None and self.previous_stamp is not None:
+            dt = stamp - self.previous_stamp
+            if 1.0e-4 < dt < 0.5:
+                measured = (position - self.previous_position) / dt
+                self.world_velocity = 0.65 * self.world_velocity + 0.35 * measured
+        self.previous_position = position
+        self.previous_stamp = stamp
+        self.latest_odom = message
+
+        alias = Odometry()
+        alias.header = message.header
+        alias.header.frame_id = str(self.get_parameter("world_frame").value)
+        alias.child_frame_id = str(self.get_parameter("body_frame").value) + "_gt"
+        alias.pose = message.pose
+        alias.twist = message.twist
+        self.gt_pub.publish(alias)
+
+    def _publish_dvl(self) -> None:
+        if self.latest_odom is None:
+            return
+        z = float(self.latest_odom.pose.pose.position.z)
+        altitude = z - float(self.get_parameter("pipe_floor_z").value)
+        in_range = (
+            float(self.get_parameter("dvl_bottom_lock_min_range").value)
+            <= altitude
+            <= float(self.get_parameter("dvl_bottom_lock_max_range").value)
+        )
+        dropout = self.rng.random() < float(
+            self.get_parameter("dvl_dropout_probability").value
+        )
+        valid = in_range and not dropout
+        valid_message = Bool()
+        valid_message.data = valid
+        self.dvl_valid_pub.publish(valid_message)
+        if not valid:
+            return
+
+        orientation = self.latest_odom.pose.pose.orientation
+        q_world_body = (
+            orientation.x,
+            orientation.y,
+            orientation.z,
+            orientation.w,
+        )
+        body_velocity = rotate_vector(
+            quaternion_conjugate(q_world_body), self.world_velocity
+        )
+        noise_std = float(self.get_parameter("dvl_velocity_noise_std").value)
+        bias = np.array(
+            [
+                self.get_parameter("dvl_bias_x").value,
+                self.get_parameter("dvl_bias_y").value,
+                self.get_parameter("dvl_bias_z").value,
+            ],
+            dtype=float,
+        )
+        measurement = body_velocity + bias + self.rng.normal(0.0, noise_std, 3)
+
+        output = TwistWithCovarianceStamped()
+        output.header.stamp = self.latest_odom.header.stamp
+        output.header.frame_id = str(self.get_parameter("body_frame").value)
+        output.twist.twist.linear.x = float(measurement[0])
+        output.twist.twist.linear.y = float(measurement[1])
+        output.twist.twist.linear.z = float(measurement[2])
+        variance = noise_std * noise_std
+        output.twist.covariance[0] = variance
+        output.twist.covariance[7] = variance
+        output.twist.covariance[14] = variance
+        output.twist.covariance[21] = 1.0e6
+        output.twist.covariance[28] = 1.0e6
+        output.twist.covariance[35] = 1.0e6
+        self.dvl_pub.publish(output)
+
+    def _publish_depth(self) -> None:
+        if self.latest_odom is None:
+            return
+        rate = float(self.get_parameter("depth_rate").value)
+        drift_density = float(self.get_parameter("depth_drift_std_per_sqrt_s").value)
+        self.depth_drift += float(self.rng.normal(0.0, drift_density / math.sqrt(rate)))
+        noise_std = float(self.get_parameter("depth_noise_std").value)
+        true_depth = max(0.0, -float(self.latest_odom.pose.pose.position.z))
+        measured_depth = max(
+            0.0,
+            true_depth
+            + float(self.get_parameter("depth_zero_bias").value)
+            + self.depth_drift
+            + float(self.rng.normal(0.0, noise_std)),
+        )
+
+        density = float(self.get_parameter("water_density").value)
+        gravity = float(self.get_parameter("gravity").value)
+        pressure = (
+            float(self.get_parameter("atmospheric_pressure").value)
+            + density * gravity * measured_depth
+        )
+        pressure_message = FluidPressure()
+        pressure_message.header.stamp = self.latest_odom.header.stamp
+        pressure_message.header.frame_id = str(self.get_parameter("body_frame").value)
+        pressure_message.fluid_pressure = pressure
+        pressure_message.variance = (density * gravity * noise_std) ** 2
+        self.depth_pub.publish(pressure_message)
+
+        depth_message = Float64()
+        depth_message.data = measured_depth
+        self.depth_value_pub.publish(depth_message)
+
+        depth_odom = Odometry()
+        depth_odom.header.stamp = self.latest_odom.header.stamp
+        depth_odom.header.frame_id = str(self.get_parameter("world_frame").value)
+        depth_odom.child_frame_id = str(self.get_parameter("body_frame").value)
+        depth_odom.pose.pose.position.z = -measured_depth
+        depth_odom.pose.pose.orientation.w = 1.0
+        depth_odom.pose.covariance = [1.0e6] * 36
+        depth_odom.pose.covariance[14] = noise_std * noise_std
+        self.depth_odom_pub.publish(depth_odom)
+
+
+def main(args=None) -> None:
+    rclpy.init(args=args, signal_handler_options=SignalHandlerOptions.NO)
+    node = SensorSimulator()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()

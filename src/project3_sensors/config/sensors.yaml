@@ -1,0 +1,61 @@
+sensor_simulator:
+  ros__parameters:
+    use_sim_time: true
+    ground_truth_topic: /pipeline_uuv/odom
+    ground_truth_output_topic: /ground_truth/odom
+    body_frame: pipeline_uuv/base_link
+    world_frame: world
+    random_seed: 7
+
+    dvl_rate: 10.0
+    dvl_velocity_noise_std: 0.003
+    dvl_bias_x: 0.0
+    dvl_bias_y: 0.0
+    dvl_bias_z: 0.0
+    dvl_dropout_probability: 0.01
+    dvl_bottom_lock_min_range: 0.20
+    dvl_bottom_lock_max_range: 2.0
+    pipe_floor_z: -4.60
+
+    depth_rate: 20.0
+    depth_noise_std: 0.01
+    depth_zero_bias: 0.02
+    depth_drift_std_per_sqrt_s: 0.0005
+    water_density: 1000.0
+    gravity: 9.80665
+    atmospheric_pressure: 101325.0
+
+camera_info_publisher:
+  ros__parameters:
+    use_sim_time: true
+    width: 640
+    height: 400
+    horizontal_fov: 1.3962634
+    baseline: 0.12
+
+svin_odom_adapter:
+  ros__parameters:
+    use_sim_time: true
+    input_topic: /okvis_odometry
+    output_topic: /svin/aligned_odom
+    world_frame: world
+    body_frame: pipeline_uuv/base_link
+    health_topic: /svin_health
+    require_tracking_health: true
+    fusion_reference_topic: /navigation/odom
+    reacquisition_gate_distance: 0.75
+    initial_x: -8.5
+    initial_y: -5.0
+    initial_z: -4.0
+    initial_yaw: 0.0
+    max_path_points: 20000
+
+navigation_evaluator:
+  ros__parameters:
+    use_sim_time: true
+    ground_truth_topic: /ground_truth/odom
+    estimate_topic: /navigation/odom
+    frame_id: world
+    max_time_difference: 0.08
+    warmup_seconds: 2.0
+    max_points: 20000

@@ -1,0 +1,24 @@
+/**:
+  ros__parameters:
+    frame_id: world
+    pool:
+      length: 24.0
+      width: 18.0
+      depth: 8.0
+    pipe:
+      center_depth: 4.0
+      inner_diameter: 1.2
+      wall_thickness: 0.12
+    spawn:
+      x: -8.5
+      y: -5.0
+      z: -4.0
+      yaw: 0.0
+    reference_waypoints:
+      # Flattened [x, y, z, yaw] control points for the future follower.
+      values: [-8.5, -5.0, -4.0, 0.0,
+               -3.0, -5.0, -4.0, 0.0,
+                0.0, -2.0, -4.0, 1.5707963268,
+                0.0,  4.0, -4.0, 1.5707963268,
+                3.0,  7.0, -4.0, 0.0,
+                8.5,  7.0, -4.0, 0.0]

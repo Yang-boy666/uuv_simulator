@@ -1,0 +1,17 @@
+# colcon 编译产物
+build/
+install/
+log/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 第三方依赖包（由 uuv_sim.repos 管理，用 `vcs import src < uuv_sim.repos` 还原）
+src/auv_control/
+src/bluerov2/
+src/pose_to_tf/
+src/simple_launch/
+src/slider_publisher/
+src/thruster_manager/

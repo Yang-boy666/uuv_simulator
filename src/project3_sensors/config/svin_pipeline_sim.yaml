@@ -1,0 +1,118 @@
+%YAML:1.0
+
+# Gazebo stereo + dedicated 200 Hz IMU calibration.
+# T_SC maps camera optical coordinates into the IMU/body-aligned sensor frame.
+cameras:
+    - {T_SC:
+       [0.0,  0.0,  1.0,  0.112,
+       -1.0,  0.0,  0.0,  0.021,
+        0.0, -1.0,  0.0, -0.018,
+        0.0,  0.0,  0.0,  1.0],
+       image_dimension: [640, 400],
+       distortion_coefficients: [0.0, 0.0, 0.0, 0.0],
+       distortion_type: radialtangential,
+       focal_length: [381.3611, 381.3611],
+       principal_point: [320.0, 200.0]}
+
+    - {T_SC:
+       [0.0,  0.0,  1.0,  0.112,
+       -1.0,  0.0,  0.0, -0.099,
+        0.0, -1.0,  0.0, -0.018,
+        0.0,  0.0,  0.0,  1.0],
+       image_dimension: [640, 400],
+       distortion_coefficients: [0.0, 0.0, 0.0, 0.0],
+       distortion_type: radialtangential,
+       focal_length: [381.3611, 381.3611],
+       principal_point: [320.0, 200.0]}
+
+camera_params:
+    camera_rate: 10
+    sigma_absolute_translation: 0.0
+    sigma_absolute_orientation: 0.0
+    sigma_c_relative_translation: 0.0
+    sigma_c_relative_orientation: 0.0
+
+imu_params:
+    a_max: 176.0
+    g_max: 7.8
+    sigma_g_c: 1.1e-4
+    sigma_a_c: 1.1e-3
+    sigma_bg: 2.0e-4
+    sigma_ba: 2.0e-3
+    sigma_gw_c: 1.0e-5
+    sigma_aw_c: 1.0e-4
+    tau: 3600.0
+    g: 9.80665
+    a0: [0.0, 0.0, 0.0]
+    imu_rate: 200
+    T_BS:
+        [1.0, 0.0, 0.0, 0.0,
+         0.0, 1.0, 0.0, 0.0,
+         0.0, 0.0, 1.0, 0.0,
+         0.0, 0.0, 0.0, 1.0]
+
+numKeyframes: 5
+numImuFrames: 3
+
+ceres_options:
+    minIterations: 3
+    maxIterations: 6
+    timeLimit: 0.03
+
+detection_options:
+    threshold: 20.0
+    octaves: 2
+    maxNoKeypoints: 500
+
+imageDelay: 0.0
+displayImages: false
+publishDebugImages: false
+useDriver: false
+
+publishing_options:
+    publish_rate: 20
+    # SVIn computes its is_tracking_ok field from this callback, so keep it
+    # enabled even when the point cloud is not displayed in RViz.
+    publishLandmarks: true
+    landmarkQualityThreshold: 1.0e-2
+    maximumLandmarkQuality: 0.05
+    maxPathLength: 20000
+    publishImuPropagatedState: false
+    T_Wc_W:
+        [1.0, 0.0, 0.0, 0.0,
+         0.0, 1.0, 0.0, 0.0,
+         0.0, 0.0, 1.0, 0.0,
+         0.0, 0.0, 0.0, 1.0]
+    trackedBodyFrame: B
+    velocitiesFrame: Wc
+
+isSonarUsed: false
+isDepthUsed: false
+histogramMethod: "NONE"
+resizeFactor: 1.0
+claheClipLimit: 2.0
+claheTilesGridSize: 8
+
+loop_closure_params:
+    enable: 0
+    min_correspondences: 20
+    pnp_reprojection_threshold: 25.0
+    pnp_ransac_iterations: 100
+    keyframe_queue: 10
+    max_yaw_diff: 30.0
+    max_position_diff: 6.0
+
+health:
+    enable: 0
+    min_keypoints: 15
+    consecutive_keyframes: 3
+    keyframe_wait_time: 2.0
+    kps_per_quadrant: 1
+
+global_map_params:
+    enable: 0
+    min_landmark_quality: 0.01
+
+output_params:
+    debug: 0
+    output_dir: /tmp/svin_pipeline_sim

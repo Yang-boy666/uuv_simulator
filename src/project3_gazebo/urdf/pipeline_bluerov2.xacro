@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<robot name="pipeline_bluerov2" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Reuse the upstream vehicle, hydrodynamics and thrusters unchanged. -->
+  <xacro:include filename="$(find bluerov2_description)/urdf/bluerov2.xacro"/>
+
+  <!--
+    The upstream camera is used as the left stereo camera.  This right camera
+    is rigidly attached to the same tilt mount with a 0.12 m baseline.
+  -->
+  <link name="${ns}/camera_right">
+    <inertial>
+      <mass value="0.015"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+  </link>
+  <joint name="camera_right_joint" type="fixed">
+    <parent link="${ns}/camera"/>
+    <child link="${ns}/camera_right"/>
+    <origin xyz="0 -0.12 0" rpy="0 0 0"/>
+  </joint>
+
+  <link name="${ns}/camera_right_optical"/>
+  <joint name="camera_right_optical_joint" type="fixed">
+    <parent link="${ns}/camera_right"/>
+    <child link="${ns}/camera_right_optical"/>
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+  </joint>
+
+  <gazebo reference="${ns}/camera_right">
+    <sensor name="camera_right" type="camera">
+      <camera>
+        <optical_frame_id>${ns}/camera_right_optical</optical_frame_id>
+        <horizontal_fov>1.3962634</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>400</height>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>100</far>
+        </clip>
+      </camera>
+      <always_on>1</always_on>
+      <update_rate>10</update_rate>
+      <visualize>true</visualize>
+      <topic>${ns}/image_right</topic>
+      <enable_metrics>false</enable_metrics>
+    </sensor>
+  </gazebo>
+
+  <!-- Dedicated, body-aligned high-rate IMU for SVIn. -->
+  <link name="${ns}/svin_imu"/>
+  <joint name="svin_imu_joint" type="fixed">
+    <parent link="${ns}/base_link"/>
+    <child link="${ns}/svin_imu"/>
+    <origin xyz="0.058 -0.021 0.018" rpy="0 0 0"/>
+  </joint>
+  <gazebo reference="${ns}/svin_imu">
+    <sensor name="svin_imu_sensor" type="imu">
+      <always_on>1</always_on>
+      <update_rate>200</update_rate>
+      <visualize>false</visualize>
+      <topic>${ns}/svin_imu</topic>
+      <gz_frame_id>${ns}/svin_imu</gz_frame_id>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.0015</stddev><bias_mean>0</bias_mean><bias_stddev>0.0002</bias_stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.0015</stddev><bias_mean>0</bias_mean><bias_stddev>0.0002</bias_stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.0015</stddev><bias_mean>0</bias_mean><bias_stddev>0.0002</bias_stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.015</stddev><bias_mean>0</bias_mean><bias_stddev>0.002</bias_stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.015</stddev><bias_mean>0</bias_mean><bias_stddev>0.002</bias_stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.015</stddev><bias_mean>0</bias_mean><bias_stddev>0.002</bias_stddev></noise></z>
+        </linear_acceleration>
+        <orientation_reference_frame><localization>ENU</localization></orientation_reference_frame>
+      </imu>
+    </sensor>
+  </gazebo>
+</robot>

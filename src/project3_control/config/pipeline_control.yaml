@@ -1,0 +1,87 @@
+/**:
+  ros__parameters:
+    use_sim_time: true
+
+pipe_guidance:
+  ros__parameters:
+    enabled: false
+    target_depth_z: -4.0
+    sensor_timeout: 0.75
+    control_rate: 10.0
+    cruise_speed: 0.22
+    minimum_turn_speed: 0.03
+    caution_distance: 1.0
+    stop_distance: 0.38
+    side_stop_distance: 0.16
+    sonar_no_return_range: 20.0
+    sonar_sensor_y_offset: -0.108
+    side_sector_half_width_deg: 8.0
+    forward_sector_half_width_deg: 6.0
+    heading_search_limit_deg: 110.0
+    heading_window_half_width_deg: 5.0
+    heading_search_step_deg: 2.0
+    heading_penalty_per_rad: 0.60
+    heading_filter_alpha: 0.15
+    center_gain: 0.75
+    max_sway_speed: 0.18
+    depth_gain: 1.0
+    max_heave_speed: 0.35
+    heading_gain: 0.45
+    max_yaw_rate: 0.35
+    stop_at_goal: true
+    goal_x: 8.5
+    goal_y: 7.0
+    goal_tolerance: 0.35
+
+velocity_controller:
+  ros__parameters:
+    control_rate: 20.0
+    command_timeout: 0.75
+    odom_timeout: 0.75
+    kp_surge: 7.0
+    ki_surge: 0.8
+    kp_sway: 7.0
+    ki_sway: 0.8
+    # The upstream model is about 3% positively buoyant (roughly +4.5 N).
+    # These gains provide enough initial down-force even if it reached the roof.
+    kp_heave: 25.0
+    ki_heave: 6.0
+    kp_yaw: 4.0
+    ki_yaw: 0.4
+    integral_limit: 1.5
+    max_force_x: 4.0
+    max_force_y: 3.0
+    max_force_z: 12.0
+    max_torque_z: 1.2
+
+thruster_allocator:
+  ros__parameters:
+    publish_rate: 20.0
+    wrench_timeout: 0.50
+    max_thrust: 8.0
+    # Row-major B: [Fx, Fy, Fz, Mx, My, Mz] = B * [T1..T6].
+    allocation_matrix: [0.7071068,  0.7071068,  0.7071068,  0.7071068,  0.0,     0.0,
+                        0.7071068, -0.7071068, -0.7071068,  0.7071068,  0.0,     0.0,
+                        0.0,        0.0,        0.0,        0.0,        1.0,    -1.0,
+                        0.0,        0.0,        0.0,        0.0,       -0.1105, -0.1105,
+                        0.0,        0.0,        0.0,        0.0,       -0.0025,  0.0025,
+                        0.1665,    -0.1665,     0.1750,    -0.1750,     0.0,     0.0]
+
+trajectory_publisher:
+  ros__parameters:
+    frame_id: world
+    min_point_distance: 0.03
+    max_points: 20000
+    # Nominal pipe centerline, including samples through both 3 m-radius bends.
+    reference_path_xyz: [-8.5, -5.0, -4.0,
+                         -3.0, -5.0, -4.0,
+                         -1.85, -4.77, -4.0,
+                         -0.88, -4.12, -4.0,
+                         -0.23, -3.15, -4.0,
+                          0.0, -2.0, -4.0,
+                          0.0,  4.0, -4.0,
+                          0.23, 5.15, -4.0,
+                          0.88, 6.12, -4.0,
+                          1.85, 6.77, -4.0,
+                          3.0,  7.0, -4.0,
+                          8.5,  7.0, -4.0]
