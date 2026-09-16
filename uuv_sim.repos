@@ -1,0 +1,25 @@
+repositories:
+  auv_control:
+    type: git
+    url: https://github.com/CentraleNantesROV/auv_control.git
+    version: c8cae74ad51035142d9926466b0e069c21fc3596
+  bluerov2:
+    type: git
+    url: https://github.com/CentraleNantesROV/bluerov2.git
+    version: a042c4c0e81fe8c8314e096bda87f336c625e846
+  pose_to_tf:
+    type: git
+    url: https://github.com/oKermorgant/pose_to_tf.git
+    version: 40c2b6defdb52ed1de73c817ff0b03c291f3e382
+  simple_launch:
+    type: git
+    url: https://github.com/oKermorgant/simple_launch.git
+    version: bc01243e25d02d3d695a81d9ace15880dd8d68ad
+  slider_publisher:
+    type: git
+    url: https://github.com/oKermorgant/slider_publisher.git
+    version: ee79ad1aecd63fef0a97991cfbfa90f0d15babf8
+  thruster_manager:
+    type: git
+    url: https://github.com/CentraleNantesROV/thruster_manager.git
+    version: bd7d7c9937dc70e0aab82dd29d9fa1f101a229db
