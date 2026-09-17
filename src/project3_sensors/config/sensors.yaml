@@ -13,9 +13,18 @@ sensor_simulator:
     dvl_bias_y: 0.0
     dvl_bias_z: 0.0
     dvl_dropout_probability: 0.01
-    dvl_bottom_lock_min_range: 0.20
-    dvl_bottom_lock_max_range: 2.0
-    pipe_floor_z: -4.60
+    # Four physical Gazebo rays determine bottom lock from scene geometry.
+    # No pipe floor, radius or route coordinates enter the sensor model.
+    dvl_bottom_lock_min_range: 0.08
+    dvl_bottom_lock_max_range: 5.0
+    dvl_beam_topics: [/dvl/beam1, /dvl/beam2, /dvl/beam3, /dvl/beam4]
+    dvl_required_beams: 3
+    dvl_beam_timeout: 0.35
+    dvl_beam_angle_from_vertical_deg: 30.0
+    # Reject a sudden near-wall -> pool-bottom jump as loss of acoustic lock.
+    dvl_lock_acquire_max_range: 1.5
+    dvl_max_range_jump: 0.45
+    dvl_reacquire_samples: 3
 
     depth_rate: 20.0
     depth_noise_std: 0.01
@@ -59,6 +68,10 @@ svin_odom_adapter:
     fusion_reference_topic: /navigation/dead_reckoning
     reacquisition_gate_distance: 0.35
     innovation_window_seconds: 10.0
+    reference_timeout: 0.6
+    max_visual_speed: 1.0
+    visual_jump_margin: 0.12
+    max_unreferenced_gap: 2.0
     initial_x: -8.5
     initial_y: -5.0
     initial_z: -4.0

@@ -11,6 +11,9 @@ def generate_launch_description():
     autonomy = LaunchConfiguration("autonomy")
     rviz = LaunchConfiguration("rviz")
     enabled = LaunchConfiguration("enabled")
+    feature_view = LaunchConfiguration("feature_view")
+    fusion_view = LaunchConfiguration("fusion_view")
+    reconstruction = LaunchConfiguration("reconstruction")
 
     gazebo_launch = PathJoinSubstitution(
         [FindPackageShare("project3_gazebo"), "launch", "pipeline_pool.launch.py"]
@@ -28,13 +31,21 @@ def generate_launch_description():
             DeclareLaunchArgument("autonomy", default_value="true"),
             DeclareLaunchArgument("rviz", default_value="true"),
             DeclareLaunchArgument("enabled", default_value="false"),
+            DeclareLaunchArgument("feature_view", default_value="true"),
+            DeclareLaunchArgument("fusion_view", default_value="true"),
+            DeclareLaunchArgument("reconstruction", default_value="true"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(gazebo_launch),
                 launch_arguments={"gui": gui, "namespace": "pipeline_uuv"}.items(),
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(navigation_launch),
-                launch_arguments={"enable_svin": "true"}.items(),
+                launch_arguments={
+                    "enable_svin": "true",
+                    "feature_view": feature_view,
+                    "fusion_view": fusion_view,
+                    "reconstruction": reconstruction,
+                }.items(),
             ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(control_launch),

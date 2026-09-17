@@ -8,6 +8,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+# 运行产物（三维重建点云等，可重新生成）
+reconstruction/
+
 # 第三方依赖包（由 uuv_sim.repos 管理，用 `vcs import src < uuv_sim.repos` 还原）
 src/auv_control/
 src/bluerov2/

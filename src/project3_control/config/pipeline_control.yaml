@@ -2,7 +2,7 @@
   ros__parameters:
     use_sim_time: true
 
-pipe_guidance:
+/**/pipe_guidance:
   ros__parameters:
     enabled: false
     target_depth_z: -4.0
@@ -22,18 +22,97 @@ pipe_guidance:
     heading_search_step_deg: 2.0
     heading_penalty_per_rad: 0.60
     heading_filter_alpha: 0.15
+    # Local obstacle planner: all distances below come from the Ping360 scan.
+    obstacle_sector_half_width_deg: 22.0
+    obstacle_trigger_distance: 0.72
+    sonar_obstacle_trigger_distance: 0.72
+    obstacle_clear_distance: 1.05
+    avoidance_turn_angle_deg: 70.0
+    avoidance_turn_rate: 0.30
+    avoidance_creep_speed: 0.025
+    avoidance_bypass_speed: 0.08
+    avoidance_bypass_heading_offset_deg: 15.0
+    avoidance_min_duration: 1.0
+    avoidance_clear_hold: 0.6
+    avoidance_side_clear_distance: 0.38
+    avoidance_pass_distance: 1.15
+    max_avoidance_heading_change_deg: 105.0
+    reacquire_speed: 0.06
+    reacquire_heading_tolerance_deg: 12.0
+    reacquire_min_turn_rate: 0.16
+    # If odometry reports no progress despite a forward command, back out and
+    # retry toward the sonar-selected clearer side.
+    stuck_timeout: 3.0
+    stuck_min_command: 0.08
+    stuck_min_progress: 0.06
+    recovery_reverse_speed: 0.07
+    recovery_reverse_duration: 1.2
     center_gain: 0.75
     max_sway_speed: 0.18
     depth_gain: 1.0
     max_heave_speed: 0.35
     heading_gain: 0.45
     max_yaw_rate: 0.35
-    stop_at_goal: true
+    # Formal experiment mode: no pipe centerline or absolute depth is consumed.
+    # Sonar centers horizontally; stereo disparity follows visible free space,
+    # including vertical bends and the most-open branch at a T junction.
+    use_reference_route: false
+    use_visual_corridor: true
+    use_visual_avoidance: true
+    visual_timeout: 0.75
+    visual_min_confidence: 0.08
+    visual_range_min_confidence: 0.20
+    visual_obstacle_trigger_distance: 0.90
+    visual_obstacle_confirmations: 3
+    visual_decision_weight: 0.45
+    visual_no_return_range: 8.0
+    visual_heading_gain: 0.50
+    visual_vertical_gain: 0.35
+    # Local DVL clearance guard; this is a measured distance, not floor Z.
+    minimum_dvl_altitude: 0.30
+    hard_dvl_altitude: 0.20
+    hard_clearance_heave_speed: 0.12
+    dvl_altitude_gain: 3.0
+    max_perception_descent_speed: 0.12
+    dvl_loss_recovery_delay: 0.5
+    dvl_loss_heave_speed: 0.06
+    navigation_health_timeout: 1.0
+    max_navigation_xy_variance: 4.0
+    route_lookahead: 0.9
+    route_depth_lookahead: 0.15
+    route_heading_weight: 0.65
+    reference_path_xyz: [-8.5, -5.0, -4.0,
+                         -3.0, -5.0, -4.0,
+                         -1.85, -4.77, -4.0,
+                         -0.88, -4.12, -4.0,
+                         -0.23, -3.15, -4.0,
+                          0.0, -2.0, -4.0,
+                          0.0, -1.5, -4.20,
+                          0.0, -1.0, -4.65,
+                          0.0, -0.5, -5.10,
+                          0.0,  0.0, -5.30,
+                          0.0,  1.0, -5.30,
+                          0.0,  1.5, -5.14,
+                          0.0,  2.0, -4.76,
+                          0.0,  2.5, -4.25,
+                          0.0,  3.0, -3.74,
+                          0.0,  3.5, -3.36,
+                          0.0,  4.0, -3.20,
+                          0.23, 5.15, -3.20,
+                          0.88, 6.12, -3.20,
+                          1.85, 6.77, -3.20,
+                          3.0,  7.0, -3.20,
+                          5.25, 7.0, -3.20,
+                          8.5,  7.0, -3.20]
+    # A sensor-only system cannot know the operator's desired mission endpoint.
+    # Stop through the service; this also triggers reconstruction saving.
+    stop_at_goal: false
     goal_x: 8.5
     goal_y: 7.0
+    goal_z: -3.2
     goal_tolerance: 0.35
 
-velocity_controller:
+/**/velocity_controller:
   ros__parameters:
     control_rate: 20.0
     command_timeout: 0.75
@@ -53,8 +132,10 @@ velocity_controller:
     max_force_y: 3.0
     max_force_z: 12.0
     max_torque_z: 1.2
+    # Bench/model-calibrated positive-buoyancy compensation, not a depth prior.
+    heave_feedforward: -4.5
 
-thruster_allocator:
+/**/thruster_allocator:
   ros__parameters:
     publish_rate: 20.0
     wrench_timeout: 0.50
@@ -67,21 +148,32 @@ thruster_allocator:
                         0.0,        0.0,        0.0,        0.0,       -0.0025,  0.0025,
                         0.1665,    -0.1665,     0.1750,    -0.1750,     0.0,     0.0]
 
-trajectory_publisher:
+/**/trajectory_publisher:
   ros__parameters:
     frame_id: world
     min_point_distance: 0.03
     max_points: 20000
-    # Nominal pipe centerline, including samples through both 3 m-radius bends.
+    # Main-route centerline: horizontal elbows, down/up bends and T-junction exit.
     reference_path_xyz: [-8.5, -5.0, -4.0,
                          -3.0, -5.0, -4.0,
                          -1.85, -4.77, -4.0,
                          -0.88, -4.12, -4.0,
                          -0.23, -3.15, -4.0,
                           0.0, -2.0, -4.0,
-                          0.0,  4.0, -4.0,
-                          0.23, 5.15, -4.0,
-                          0.88, 6.12, -4.0,
-                          1.85, 6.77, -4.0,
-                          3.0,  7.0, -4.0,
-                          8.5,  7.0, -4.0]
+                          0.0, -1.5, -4.20,
+                          0.0, -1.0, -4.65,
+                          0.0, -0.5, -5.10,
+                          0.0,  0.0, -5.30,
+                          0.0,  1.0, -5.30,
+                          0.0,  1.5, -5.14,
+                          0.0,  2.0, -4.76,
+                          0.0,  2.5, -4.25,
+                          0.0,  3.0, -3.74,
+                          0.0,  3.5, -3.36,
+                          0.0,  4.0, -3.20,
+                          0.23, 5.15, -3.20,
+                          0.88, 6.12, -3.20,
+                          1.85, 6.77, -3.20,
+                          3.0,  7.0, -3.20,
+                          5.25, 7.0, -3.20,
+                          8.5,  7.0, -3.20]

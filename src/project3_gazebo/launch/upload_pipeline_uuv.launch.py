@@ -69,6 +69,16 @@ def launch_setup():
             ),
         ]
 
+        for beam_index in range(1, 5):
+            bridges.append(
+                GazeboBridge(
+                    f"/{ns}/dvl/beam{beam_index}",
+                    f"/dvl/beam{beam_index}",
+                    "sensor_msgs/LaserScan",
+                    GazeboBridge.gz2ros,
+                )
+            )
+
         if sl.arg("ground_truth"):
             bridges.append(
                 GazeboBridge(

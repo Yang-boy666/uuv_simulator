@@ -48,6 +48,62 @@
     </sensor>
   </gazebo>
 
+  <!--
+    Four-beam Janus DVL geometry.  Each Gazebo ray is 30 degrees from the
+    downward vertical and obtains bottom lock from real scene collisions.  No
+    pipe radius, floor height or route geometry is used by the DVL model.
+  -->
+  <xacro:macro name="dvl_beam" params="index yaw">
+    <link name="${ns}/dvl_beam${index}"/>
+    <joint name="dvl_beam${index}_joint" type="fixed">
+      <parent link="${ns}/base_link"/>
+      <child link="${ns}/dvl_beam${index}"/>
+      <!-- Place the acoustic head below the ROV fairing so the GPU beam does
+           not self-intersect the vehicle mesh before leaving the transducer. -->
+      <origin xyz="0 0 -0.22" rpy="0 ${pi/3} ${yaw}"/>
+    </joint>
+    <gazebo reference="${ns}/dvl_beam${index}">
+      <sensor name="dvl_beam${index}_sensor" type="gpu_lidar">
+        <always_on>1</always_on>
+        <update_rate>10</update_rate>
+        <visualize>false</visualize>
+        <topic>${ns}/dvl/beam${index}</topic>
+        <gz_frame_id>${ns}/dvl_beam${index}</gz_frame_id>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>3</samples>
+              <resolution>1</resolution>
+              <min_angle>-0.02</min_angle>
+              <max_angle>0.02</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>3</samples>
+              <resolution>1</resolution>
+              <min_angle>-0.02</min_angle>
+              <max_angle>0.02</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>0.08</min>
+            <max>5.0</max>
+            <resolution>0.002</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.002</stddev>
+          </noise>
+        </lidar>
+      </sensor>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:dvl_beam index="1" yaw="${pi/4}"/>
+  <xacro:dvl_beam index="2" yaw="${3*pi/4}"/>
+  <xacro:dvl_beam index="3" yaw="${-3*pi/4}"/>
+  <xacro:dvl_beam index="4" yaw="${-pi/4}"/>
+
   <!-- Dedicated, body-aligned high-rate IMU for SVIn. -->
   <link name="${ns}/svin_imu"/>
   <joint name="svin_imu_joint" type="fixed">

@@ -27,6 +27,10 @@ setup(
             "dead_reckoning_guard = project3_sensors.dead_reckoning_guard:main",
             "svin_odom_adapter = project3_sensors.svin_odom_adapter:main",
             "navigation_evaluator = project3_sensors.navigation_evaluator:main",
+            "orb_stereo_visualizer = project3_sensors.orb_stereo_visualizer:main",
+            "stereo_perception = project3_sensors.stereo_perception:main",
+            "fusion_dashboard = project3_sensors.fusion_dashboard:main",
+            "stereo_pipe_reconstructor = project3_sensors.stereo_pipe_reconstructor:main",
         ],
     },
 )

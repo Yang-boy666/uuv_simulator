@@ -34,6 +34,10 @@ class SvinOdomAdapter(Node):
         self.declare_parameter("fusion_reference_topic", "/navigation/dead_reckoning")
         self.declare_parameter("reacquisition_gate_distance", 0.35)
         self.declare_parameter("innovation_window_seconds", 10.0)
+        self.declare_parameter("reference_timeout", 0.6)
+        self.declare_parameter("max_visual_speed", 1.0)
+        self.declare_parameter("visual_jump_margin", 0.12)
+        self.declare_parameter("max_unreferenced_gap", 2.0)
         self.declare_parameter("initial_x", -8.5)
         self.declare_parameter("initial_y", -5.0)
         self.declare_parameter("initial_z", -4.0)
@@ -60,10 +64,13 @@ class SvinOdomAdapter(Node):
         self.ever_accepted = False
         self.reference_gate_armed = False
         self.latest_reference_position: Optional[np.ndarray] = None
+        self.latest_reference_arrival: Optional[float] = None
         self.reference_anchor: Optional[np.ndarray] = None
         self.visual_anchor: Optional[np.ndarray] = None
         self.anchor_stamp: Optional[float] = None
         self.innovation_rejected = False
+        self.last_accepted_position: Optional[np.ndarray] = None
+        self.last_accepted_stamp: Optional[float] = None
 
         self.odom_pub = self.create_publisher(
             Odometry, str(self.get_parameter("output_topic").value), 20
@@ -121,6 +128,7 @@ class SvinOdomAdapter(Node):
         self.latest_reference_position = np.array(
             [position.x, position.y, position.z], dtype=float
         )
+        self.latest_reference_arrival = self.get_clock().now().nanoseconds * 1.0e-9
 
     @staticmethod
     def _quaternion(message) -> tuple[float, float, float, float]:
@@ -153,9 +161,17 @@ class SvinOdomAdapter(Node):
         aligned_position = self.initial_position + rotate_vector(q_alignment, relative_position)
         aligned_orientation = quaternion_multiply(q_alignment, source_orientation)
 
-        if self.ever_accepted and self.latest_reference_position is not None:
+        stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+        now = self.get_clock().now().nanoseconds * 1.0e-9
+        reference_fresh = (
+            self.latest_reference_position is not None
+            and self.latest_reference_arrival is not None
+            and now - self.latest_reference_arrival
+            <= float(self.get_parameter("reference_timeout").value)
+        )
+        if self.ever_accepted and reference_fresh:
             gate = float(self.get_parameter("reacquisition_gate_distance").value)
-            stamp = message.header.stamp.sec + 1.0e-9 * message.header.stamp.nanosec
+            assert self.latest_reference_position is not None
             absolute_innovation = float(
                 np.linalg.norm(aligned_position - self.latest_reference_position)
             )
@@ -174,23 +190,19 @@ class SvinOdomAdapter(Node):
             ):
                 visual_delta = aligned_position - self.visual_anchor
                 reference_delta = self.latest_reference_position - self.reference_anchor
-                relative_innovation = float(
-                    np.linalg.norm(visual_delta - reference_delta)
-                )
+                relative_innovation = float(np.linalg.norm(visual_delta - reference_delta))
 
             if self.reference_gate_armed and relative_innovation > gate:
                 self._publish_tracking_status(False)
                 if not self.innovation_rejected:
                     self.get_logger().warning(
                         f"SVIn pose rejected: independent DR innovation "
-                        f"{relative_innovation:.2f} m "
-                        f"> {gate:.2f} m"
+                        f"{relative_innovation:.2f} m > {gate:.2f} m"
                     )
                 self.innovation_rejected = True
                 return
 
-            # A short sliding window avoids comparing long-term DVL drift with
-            # long-term visual drift while retaining an independent local test.
+            # Sliding anchors compare local motion instead of accumulated drift.
             window = float(self.get_parameter("innovation_window_seconds").value)
             if (
                 self.reference_gate_armed
@@ -202,10 +214,34 @@ class SvinOdomAdapter(Node):
                 self.reference_anchor = self.latest_reference_position.copy()
                 self.anchor_stamp = stamp
 
+        elif self.ever_accepted and self.last_accepted_position is not None:
+            # Never compare visual odometry against a frozen DVL trajectory.
+            # During bottom-lock loss use a local kinematic continuity gate;
+            # long outages wait for an independent reference to return.
+            assert self.last_accepted_stamp is not None
+            dt = stamp - self.last_accepted_stamp
+            maximum_gap = float(self.get_parameter("max_unreferenced_gap").value)
+            displacement = float(np.linalg.norm(aligned_position - self.last_accepted_position))
+            allowed = (
+                float(self.get_parameter("visual_jump_margin").value)
+                + float(self.get_parameter("max_visual_speed").value) * max(0.0, dt)
+            )
+            if dt <= 0.0 or dt > maximum_gap or displacement > allowed:
+                self._publish_tracking_status(False)
+                if not self.innovation_rejected:
+                    self.get_logger().warning(
+                        f"SVIn continuity rejected without fresh DVL reference: "
+                        f"jump={displacement:.2f} m, dt={dt:.2f} s"
+                    )
+                self.innovation_rejected = True
+                return
+
         if not self.output_tracking_ok:
             self.get_logger().info("SVIn visual pose passed health/innovation gates")
         self.innovation_rejected = False
         self.ever_accepted = True
+        self.last_accepted_position = aligned_position.copy()
+        self.last_accepted_stamp = stamp
         self._publish_tracking_status(True)
 
         output = Odometry()

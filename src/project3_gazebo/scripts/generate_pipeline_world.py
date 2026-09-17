@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the 24 m x 18 m x 8 m pool with a hollow bent inspection pipe."""
+"""Generate the 24 m x 18 m x 8 m pool with a 3-D inspection pipe."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Iterable, List, Sequence, Tuple
 
 
-Point2 = Tuple[float, float]
+Point3 = Tuple[float, float, float]
 
 
 POOL_LENGTH = 24.0
@@ -24,51 +24,78 @@ ELBOW_STEPS = 12
 PANEL_OVERLAP = 0.06
 
 
-def line_points(start: Point2, end: Point2, step: float) -> List[Point2]:
+def line_points(start: Point3, end: Point3, step: float) -> List[Point3]:
     distance = math.dist(start, end)
     count = max(1, math.ceil(distance / step))
     return [
         (
             start[0] + (end[0] - start[0]) * i / count,
             start[1] + (end[1] - start[1]) * i / count,
+            start[2] + (end[2] - start[2]) * i / count,
         )
         for i in range(count + 1)
     ]
 
 
-def arc_points(
-    center: Point2, radius: float, start_angle: float, end_angle: float, count: int
-) -> List[Point2]:
+def horizontal_arc_points(
+    center: Point3, radius: float, start_angle: float, end_angle: float, count: int
+) -> List[Point3]:
     return [
         (
             center[0] + radius * math.cos(start_angle + (end_angle - start_angle) * i / count),
             center[1] + radius * math.sin(start_angle + (end_angle - start_angle) * i / count),
+            center[2],
         )
         for i in range(count + 1)
     ]
 
 
-def append_without_duplicate(route: List[Point2], points: Iterable[Point2]) -> None:
+def smooth_vertical_points(start: Point3, end: Point3, count: int) -> List[Point3]:
+    """Smoothstep interpolation gives horizontal tangents at both bend ends."""
+    points: List[Point3] = []
+    for index in range(count + 1):
+        u = index / count
+        smooth = u * u * (3.0 - 2.0 * u)
+        points.append(
+            (
+                start[0] + (end[0] - start[0]) * u,
+                start[1] + (end[1] - start[1]) * u,
+                start[2] + (end[2] - start[2]) * smooth,
+            )
+        )
+    return points
+
+
+def append_without_duplicate(route: List[Point3], points: Iterable[Point3]) -> None:
     for point in points:
         if not route or math.dist(route[-1], point) > 1.0e-9:
             route.append(point)
 
 
-def build_route() -> List[Point2]:
-    """Return a continuous route with two horizontal 90 degree elbows."""
-    route: List[Point2] = []
-    append_without_duplicate(route, line_points((-9.0, -5.0), (-3.0, -5.0), STRAIGHT_STEP))
+def build_route() -> List[Point3]:
+    """Main route: horizontal elbows, down/up bends, then the T junction."""
+    route: List[Point3] = []
+    append_without_duplicate(route, line_points((-9.0, -5.0, -4.0), (-3.0, -5.0, -4.0), STRAIGHT_STEP))
     append_without_duplicate(
         route,
-        arc_points((-3.0, -2.0), 3.0, -math.pi / 2.0, 0.0, ELBOW_STEPS),
+        horizontal_arc_points((-3.0, -2.0, -4.0), 3.0, -math.pi / 2.0, 0.0, ELBOW_STEPS),
     )
-    append_without_duplicate(route, line_points((0.0, -2.0), (0.0, 4.0), STRAIGHT_STEP))
+    # Descend 1.3 m, hold depth briefly, then climb 2.1 m.  The smooth bends
+    # are deliberately long enough for a level UUV to follow using surge/heave.
+    append_without_duplicate(route, smooth_vertical_points((0.0, -2.0, -4.0), (0.0, 0.0, -5.3), 12))
+    append_without_duplicate(route, line_points((0.0, 0.0, -5.3), (0.0, 1.0, -5.3), 0.5))
+    append_without_duplicate(route, smooth_vertical_points((0.0, 1.0, -5.3), (0.0, 4.0, -3.2), 16))
     append_without_duplicate(
         route,
-        arc_points((3.0, 4.0), 3.0, math.pi, math.pi / 2.0, ELBOW_STEPS),
+        horizontal_arc_points((3.0, 4.0, -3.2), 3.0, math.pi, math.pi / 2.0, ELBOW_STEPS),
     )
-    append_without_duplicate(route, line_points((3.0, 7.0), (9.0, 7.0), STRAIGHT_STEP))
+    append_without_duplicate(route, line_points((3.0, 7.0, -3.2), (9.0, 7.0, -3.2), STRAIGHT_STEP))
     return route
+
+
+def build_t_branch() -> List[Point3]:
+    """A visible, traversable side branch opening toward the pool centre."""
+    return line_points((5.25, 7.0, -3.2), (5.25, 2.5, -3.2), STRAIGHT_STEP)
 
 
 def fmt(value: float) -> str:
@@ -146,35 +173,67 @@ def add_emissive_box(
     )
 
 
-def pipe_panels(route: Sequence[Point2]) -> List[str]:
+def segment_pose(start: Point3, end: Point3) -> Tuple[float, float, float, float, float, float]:
+    """Return centre xyz, yaw, pitch and 3-D length for a pipe segment."""
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    dz = end[2] - start[2]
+    horizontal = math.hypot(dx, dy)
+    length = math.sqrt(dx * dx + dy * dy + dz * dz)
+    yaw = math.atan2(dy, dx)
+    pitch = math.atan2(-dz, horizontal)
+    return (
+        0.5 * (start[0] + end[0]),
+        0.5 * (start[1] + end[1]),
+        0.5 * (start[2] + end[2]),
+        yaw,
+        pitch,
+        length,
+    )
+
+
+def radial_vector(yaw: float, pitch: float, roll: float) -> Point3:
+    """World direction of local +Z after Rz(yaw) Ry(pitch) Rx(roll)."""
+    return (
+        math.cos(yaw) * math.sin(pitch) * math.cos(roll) + math.sin(yaw) * math.sin(roll),
+        math.sin(yaw) * math.sin(pitch) * math.cos(roll) - math.cos(yaw) * math.sin(roll),
+        math.cos(pitch) * math.cos(roll),
+    )
+
+
+def pipe_panels(
+    route: Sequence[Point3], prefix: str, open_t_junction: bool = False
+) -> List[str]:
     lines: List[str] = []
     panel_radius = PIPE_INNER_RADIUS + PIPE_WALL_THICKNESS / 2.0
     panel_width = 2.0 * panel_radius * math.tan(math.pi / PIPE_SIDES) + 0.02
 
     for segment_index, (start, end) in enumerate(zip(route, route[1:])):
-        dx = end[0] - start[0]
-        dy = end[1] - start[1]
-        length = math.hypot(dx, dy) + PANEL_OVERLAP
-        yaw = math.atan2(dy, dx)
-        center_x = (start[0] + end[0]) / 2.0
-        center_y = (start[1] + end[1]) / 2.0
+        center_x, center_y, center_z, yaw, pitch, raw_length = segment_pose(start, end)
+        length = raw_length + PANEL_OVERLAP
 
         for side in range(PIPE_SIDES):
             roll = 2.0 * math.pi * side / PIPE_SIDES
-            # Rz(yaw) * Rx(roll) * local_z gives the panel's outward normal.
-            radial_x = math.sin(yaw) * math.sin(roll)
-            radial_y = -math.cos(yaw) * math.sin(roll)
-            radial_z = math.cos(roll)
+            # Remove the south-facing wall of the main tube at the junction so
+            # the branch is an actual opening rather than a merely overlapping model.
+            if (
+                open_t_junction
+                and abs(center_x - 5.25) < 0.72
+                and abs(center_y - 7.0) < 0.25
+                and side in (1, 2, 3)
+            ):
+                continue
+            radial_x, radial_y, radial_z = radial_vector(yaw, pitch, roll)
             x = center_x + panel_radius * radial_x
             y = center_y + panel_radius * radial_y
-            z = PIPE_CENTER_Z + panel_radius * radial_z
+            z = center_z + panel_radius * radial_z
 
-            at_elbow = 8 <= segment_index < 20 or 28 <= segment_index < 40
+            at_elbow = abs(pitch) > math.radians(4.0) or segment_index % 13 in (8, 9, 10, 11)
             rgba = (0.68, 0.32, 0.08, 0.58) if at_elbow else (0.28, 0.33, 0.36, 0.52)
             add_box(
                 lines,
-                f"pipe_{segment_index:03d}_{side:02d}",
-                (x, y, z, roll, 0.0, yaw),
+                f"{prefix}_{segment_index:03d}_{side:02d}",
+                (x, y, z, roll, pitch, yaw),
                 (length, panel_width, PIPE_WALL_THICKNESS),
                 rgba,
             )
@@ -182,15 +241,26 @@ def pipe_panels(route: Sequence[Point2]) -> List[str]:
     return lines
 
 
-def route_markers(route: Sequence[Point2]) -> List[str]:
+def route_markers(route: Sequence[Point3]) -> List[str]:
     lines: List[str] = []
-    marker_indices = [1, 8, 14, 20, 28, 34, 40, len(route) - 2]
+    marker_indices = sorted({1, *(round(i * (len(route) - 2) / 9) for i in range(1, 9)), len(route) - 2})
     for marker_id, route_index in enumerate(marker_indices):
-        x, y = route[route_index]
+        start = route[max(0, route_index - 1)]
+        end = route[min(len(route) - 1, route_index + 1)]
+        x, y, z = route[route_index]
+        _, _, _, yaw, pitch, _ = segment_pose(start, end)
+        radial = radial_vector(yaw, pitch, math.pi)
         add_box(
             lines,
             f"route_marker_{marker_id:02d}",
-            (x, y, PIPE_CENTER_Z - PIPE_INNER_RADIUS + 0.015, 0.0, 0.0, 0.0),
+            (
+                x + (PIPE_INNER_RADIUS - 0.015) * radial[0],
+                y + (PIPE_INNER_RADIUS - 0.015) * radial[1],
+                z + (PIPE_INNER_RADIUS - 0.015) * radial[2],
+                0.0,
+                pitch,
+                yaw,
+            ),
             (0.20, 0.20, 0.025),
             (0.95, 0.12, 0.05, 1.0),
             collision=False,
@@ -198,7 +268,27 @@ def route_markers(route: Sequence[Point2]) -> List[str]:
     return lines
 
 
-def visual_feature_markers(route: Sequence[Point2]) -> List[str]:
+def inspection_obstacles() -> List[str]:
+    """Add passable debris for a sensor-only local-planning experiment.
+
+    The obstacle intrudes from the right wall of the first straight section,
+    while leaving a traversable opening on the left.  Its pose is used only to
+    generate Gazebo collision/visual geometry and is never published to the
+    controller.
+    """
+    lines: List[str] = []
+    add_box(
+        lines,
+        "partial_blockage_right",
+        (-5.40, -5.34, -4.00, 0.0, 0.0, 0.0),
+        (0.18, 0.40, 0.70),
+        (0.92, 0.62, 0.06, 1.0),
+        collision=True,
+    )
+    return lines
+
+
+def visual_feature_markers(route: Sequence[Point3], prefix: str = "vio") -> List[str]:
     """Add non-periodic, high-contrast patches for stereo/VIO evaluation.
 
     Smooth, repeating pipe panels are a deliberately difficult visual scene.
@@ -217,11 +307,12 @@ def visual_feature_markers(route: Sequence[Point2]) -> List[str]:
     radial_distance = PIPE_INNER_RADIUS - 0.012
 
     for index, (start, end) in enumerate(zip(route, route[1:])):
-        dx = end[0] - start[0]
-        dy = end[1] - start[1]
-        yaw = math.atan2(dy, dx)
-        center_x = 0.5 * (start[0] + end[0])
-        center_y = 0.5 * (start[1] + end[1])
+        center_x, center_y, center_z, yaw, pitch, segment_length = segment_pose(start, end)
+        tangent = (
+            (end[0] - start[0]) / segment_length,
+            (end[1] - start[1]) / segment_length,
+            (end[2] - start[2]) / segment_length,
+        )
         color = colors[(index * 3 + index // 4) % len(colors)]
 
         # Vary patch dimensions and longitudinal offsets so the visual pattern
@@ -229,19 +320,20 @@ def visual_feature_markers(route: Sequence[Point2]) -> List[str]:
         length = 0.10 + 0.035 * (index % 4)
         width = 0.08 + 0.025 * ((index * 3) % 5)
         along = (-0.16, 0.0, 0.13)[index % 3]
-        offset_x = along * math.cos(yaw)
-        offset_y = along * math.sin(yaw)
+        offset_x = along * tangent[0]
+        offset_y = along * tangent[1]
+        offset_z = along * tangent[2]
 
         # Floor marker.
         add_box(
             lines,
-            f"vio_floor_{index:03d}",
+            f"{prefix}_floor_{index:03d}",
             (
-                center_x + offset_x,
-                center_y + offset_y,
-                PIPE_CENTER_Z - radial_distance,
-                0.0,
-                0.0,
+                center_x + offset_x - radial_distance * radial_vector(yaw, pitch, 0.0)[0],
+                center_y + offset_y - radial_distance * radial_vector(yaw, pitch, 0.0)[1],
+                center_z + offset_z - radial_distance * radial_vector(yaw, pitch, 0.0)[2],
+                math.pi,
+                pitch,
                 yaw,
             ),
             (length, width, 0.018),
@@ -252,17 +344,16 @@ def visual_feature_markers(route: Sequence[Point2]) -> List[str]:
         # Alternating side-wall marker.  roll rotates the thin box normal onto
         # the pipe radial direction.
         side_roll = math.pi / 2.0 if index % 2 == 0 else -math.pi / 2.0
-        radial_x = math.sin(yaw) * math.sin(side_roll)
-        radial_y = -math.cos(yaw) * math.sin(side_roll)
+        radial_x, radial_y, radial_z = radial_vector(yaw, pitch, side_roll)
         add_box(
             lines,
-            f"vio_side_{index:03d}",
+            f"{prefix}_side_{index:03d}",
             (
                 center_x + radial_distance * radial_x - 0.5 * offset_x,
                 center_y + radial_distance * radial_y - 0.5 * offset_y,
-                PIPE_CENTER_Z + 0.12 * ((index % 3) - 1),
+                center_z + radial_distance * radial_z - 0.5 * offset_z,
                 side_roll,
-                0.0,
+                pitch,
                 yaw,
             ),
             (width, length, 0.018),
@@ -275,13 +366,13 @@ def visual_feature_markers(route: Sequence[Point2]) -> List[str]:
         if index % 2 == 0:
             add_box(
                 lines,
-                f"vio_ceiling_{index:03d}",
+                f"{prefix}_ceiling_{index:03d}",
                 (
-                    center_x - offset_x,
-                    center_y - offset_y,
-                    PIPE_CENTER_Z + radial_distance,
+                    center_x - offset_x + radial_distance * radial_vector(yaw, pitch, 0.0)[0],
+                    center_y - offset_y + radial_distance * radial_vector(yaw, pitch, 0.0)[1],
+                    center_z - offset_z + radial_distance * radial_vector(yaw, pitch, 0.0)[2],
                     0.0,
-                    0.0,
+                    pitch,
                     yaw,
                 ),
                 (0.07 + 0.02 * (index % 3), 0.12, 0.018),
@@ -291,7 +382,7 @@ def visual_feature_markers(route: Sequence[Point2]) -> List[str]:
     return lines
 
 
-def fiducial_boards(route: Sequence[Point2]) -> List[str]:
+def fiducial_boards(route: Sequence[Point3], prefix: str = "vio") -> List[str]:
     """Place camera-facing inspection tags near, but clear of, the pipe wall."""
     lines: List[str] = []
     backgrounds = [
@@ -304,11 +395,7 @@ def fiducial_boards(route: Sequence[Point2]) -> List[str]:
     bright = (0.98, 0.98, 0.98, 1.0)
 
     for index, (start, end) in enumerate(zip(route, route[1:])):
-        dx = end[0] - start[0]
-        dy = end[1] - start[1]
-        yaw = math.atan2(dy, dx)
-        center_x = 0.5 * (start[0] + end[0])
-        center_y = 0.5 * (start[1] + end[1])
+        center_x, center_y, center_z, yaw, pitch, segment_length = segment_pose(start, end)
         # Lateral axis of the route in world coordinates.
         left_x = -math.sin(yaw)
         left_y = math.cos(yaw)
@@ -317,33 +404,34 @@ def fiducial_boards(route: Sequence[Point2]) -> List[str]:
         z_offset = (-0.16, 0.0, 0.16)[index % 3]
         board_x = center_x + lateral * left_x
         board_y = center_y + lateral * left_y
-        board_z = PIPE_CENTER_Z + z_offset
+        board_z = center_z + z_offset
 
         # Thin local-X dimension means the broad YZ face looks toward vehicles
         # travelling along the route.
         add_emissive_box(
             lines,
-            f"vio_tag_bg_{index:03d}",
-            (board_x, board_y, board_z, 0.0, 0.0, yaw),
+            f"{prefix}_tag_bg_{index:03d}",
+            (board_x, board_y, board_z, 0.0, pitch, yaw),
             (0.018, 0.24, 0.22),
             backgrounds[(index * 3) % len(backgrounds)],
         )
 
         # Two asymmetric dark/bright cells make every board yield strong BRISK
         # corners and avoid a single repeated template.
-        forward_x = math.cos(yaw)
-        forward_y = math.sin(yaw)
+        forward_x = (end[0] - start[0]) / segment_length
+        forward_y = (end[1] - start[1]) / segment_length
+        forward_z = (end[2] - start[2]) / segment_length
         face_offset = -0.013
         cell_shift = 0.055 if index % 4 < 2 else -0.055
         add_emissive_box(
             lines,
-            f"vio_tag_dark_{index:03d}",
+            f"{prefix}_tag_dark_{index:03d}",
             (
                 board_x + face_offset * forward_x + cell_shift * left_x,
                 board_y + face_offset * forward_y + cell_shift * left_y,
-                board_z + (0.045 if index % 2 == 0 else -0.045),
+                board_z + face_offset * forward_z + (0.045 if index % 2 == 0 else -0.045),
                 0.0,
-                0.0,
+                pitch,
                 yaw,
             ),
             (0.006, 0.075, 0.075),
@@ -351,13 +439,13 @@ def fiducial_boards(route: Sequence[Point2]) -> List[str]:
         )
         add_emissive_box(
             lines,
-            f"vio_tag_bright_{index:03d}",
+            f"{prefix}_tag_bright_{index:03d}",
             (
                 board_x + face_offset * forward_x - cell_shift * left_x,
                 board_y + face_offset * forward_y - cell_shift * left_y,
-                board_z - (0.045 if index % 2 == 0 else -0.045),
+                board_z + face_offset * forward_z - (0.045 if index % 2 == 0 else -0.045),
                 0.0,
-                0.0,
+                pitch,
                 yaw,
             ),
             (0.006, 0.055 + 0.01 * (index % 3), 0.055),
@@ -368,6 +456,7 @@ def fiducial_boards(route: Sequence[Point2]) -> List[str]:
 
 def generate_world() -> str:
     route = build_route()
+    branch = build_t_branch()
     lines = [
         '<?xml version="1.0"?>',
         '<sdf version="1.8">',
@@ -432,10 +521,14 @@ def generate_world() -> str:
             '      <link name="pipe_shell">',
         ]
     )
-    lines.extend(pipe_panels(route))
+    lines.extend(pipe_panels(route, "pipe_main", open_t_junction=True))
+    lines.extend(pipe_panels(branch, "pipe_t_branch"))
+    lines.extend(inspection_obstacles())
     lines.extend(route_markers(route))
     lines.extend(visual_feature_markers(route))
+    lines.extend(visual_feature_markers(branch, "branch_vio"))
     lines.extend(fiducial_boards(route))
+    lines.extend(fiducial_boards(branch, "branch_vio"))
     lines.extend(
         [
             '      </link>',

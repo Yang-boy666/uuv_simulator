@@ -16,8 +16,8 @@ from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import FluidPressure
-from std_msgs.msg import Bool, Float64
+from sensor_msgs.msg import FluidPressure, LaserScan
+from std_msgs.msg import Bool, Float64, Float64MultiArray
 
 from .math_utils import quaternion_conjugate, rotate_vector
 
@@ -36,9 +36,20 @@ class SensorSimulator(Node):
             "dvl_bias_y": 0.0,
             "dvl_bias_z": 0.0,
             "dvl_dropout_probability": 0.01,
-            "dvl_bottom_lock_min_range": 0.20,
-            "dvl_bottom_lock_max_range": 2.0,
-            "pipe_floor_z": -4.60,
+            "dvl_bottom_lock_min_range": 0.08,
+            "dvl_bottom_lock_max_range": 5.0,
+            "dvl_beam_topics": [
+                "/dvl/beam1",
+                "/dvl/beam2",
+                "/dvl/beam3",
+                "/dvl/beam4",
+            ],
+            "dvl_required_beams": 3,
+            "dvl_beam_timeout": 0.35,
+            "dvl_beam_angle_from_vertical_deg": 30.0,
+            "dvl_lock_acquire_max_range": 1.5,
+            "dvl_max_range_jump": 0.45,
+            "dvl_reacquire_samples": 3,
             "depth_rate": 20.0,
             "depth_noise_std": 0.01,
             "depth_zero_bias": 0.02,
@@ -57,6 +68,11 @@ class SensorSimulator(Node):
         self.previous_stamp: Optional[float] = None
         self.world_velocity = np.zeros(3, dtype=float)
         self.depth_drift = 0.0
+        self.beam_ranges: dict[str, float] = {}
+        self.beam_stamps: dict[str, float] = {}
+        self.dvl_bottom_locked = False
+        self.dvl_last_locked_range: Optional[float] = None
+        self.dvl_reacquire_count = 0
 
         self.gt_pub = self.create_publisher(
             Odometry, str(self.get_parameter("ground_truth_output_topic").value), 20
@@ -65,6 +81,10 @@ class SensorSimulator(Node):
             TwistWithCovarianceStamped, "/dvl/velocity", qos_profile_sensor_data
         )
         self.dvl_valid_pub = self.create_publisher(Bool, "/dvl/valid", 10)
+        self.dvl_altitude_pub = self.create_publisher(Float64, "/dvl/altitude", 10)
+        self.dvl_beam_pub = self.create_publisher(
+            Float64MultiArray, "/dvl/beam_ranges", 10
+        )
         self.depth_pub = self.create_publisher(
             FluidPressure, "/depth", qos_profile_sensor_data
         )
@@ -77,10 +97,21 @@ class SensorSimulator(Node):
             self._ground_truth_callback,
             qos_profile_sensor_data,
         )
+        self.beam_subscriptions = []
+        for topic in self.get_parameter("dvl_beam_topics").value:
+            topic_name = str(topic)
+            self.beam_subscriptions.append(
+                self.create_subscription(
+                    LaserScan,
+                    topic_name,
+                    lambda message, name=topic_name: self._beam_callback(name, message),
+                    qos_profile_sensor_data,
+                )
+            )
         self.create_timer(1.0 / float(self.get_parameter("dvl_rate").value), self._publish_dvl)
         self.create_timer(1.0 / float(self.get_parameter("depth_rate").value), self._publish_depth)
         self.get_logger().info(
-            "DVL/depth simulator ready; ground truth is isolated from navigation inputs"
+            "Four-beam DVL/depth simulator ready; bottom lock comes from Gazebo ray collisions"
         )
 
     @staticmethod
@@ -114,20 +145,80 @@ class SensorSimulator(Node):
         alias.twist = message.twist
         self.gt_pub.publish(alias)
 
+    def _beam_callback(self, topic: str, message: LaserScan) -> None:
+        finite = [
+            float(value)
+            for value in message.ranges
+            if math.isfinite(value)
+            and float(self.get_parameter("dvl_bottom_lock_min_range").value)
+            <= value
+            <= float(self.get_parameter("dvl_bottom_lock_max_range").value)
+        ]
+        self.beam_ranges[topic] = float(np.median(finite)) if finite else math.nan
+        self.beam_stamps[topic] = (
+            float(message.header.stamp.sec) + 1.0e-9 * float(message.header.stamp.nanosec)
+        )
+
     def _publish_dvl(self) -> None:
         if self.latest_odom is None:
             return
-        z = float(self.latest_odom.pose.pose.position.z)
-        altitude = z - float(self.get_parameter("pipe_floor_z").value)
-        in_range = (
-            float(self.get_parameter("dvl_bottom_lock_min_range").value)
-            <= altitude
-            <= float(self.get_parameter("dvl_bottom_lock_max_range").value)
-        )
+        stamp = self._stamp_seconds(self.latest_odom)
+        timeout = float(self.get_parameter("dvl_beam_timeout").value)
+        topics = [str(topic) for topic in self.get_parameter("dvl_beam_topics").value]
+        ranges = []
+        for topic in topics:
+            value = self.beam_ranges.get(topic, math.nan)
+            beam_stamp = self.beam_stamps.get(topic, -math.inf)
+            ranges.append(value if stamp - beam_stamp <= timeout else math.nan)
+        valid_ranges = [value for value in ranges if math.isfinite(value)]
+        in_range = len(valid_ranges) >= int(self.get_parameter("dvl_required_beams").value)
+        median_range = float(np.median(valid_ranges)) if valid_ranges else math.nan
+        geometrically_consistent = in_range
+        if self.dvl_bottom_locked and math.isfinite(median_range):
+            if (
+                self.dvl_last_locked_range is not None
+                and abs(median_range - self.dvl_last_locked_range)
+                > float(self.get_parameter("dvl_max_range_jump").value)
+            ):
+                self.dvl_bottom_locked = False
+                self.dvl_reacquire_count = 0
+                geometrically_consistent = False
+                self.get_logger().warning(
+                    "DVL bottom lock rejected: implausible beam-range discontinuity"
+                )
+        if not self.dvl_bottom_locked:
+            can_acquire = (
+                in_range
+                and math.isfinite(median_range)
+                and median_range
+                <= float(self.get_parameter("dvl_lock_acquire_max_range").value)
+            )
+            self.dvl_reacquire_count = self.dvl_reacquire_count + 1 if can_acquire else 0
+            if self.dvl_reacquire_count >= int(
+                self.get_parameter("dvl_reacquire_samples").value
+            ):
+                self.dvl_bottom_locked = True
+                self.dvl_reacquire_count = 0
+        if self.dvl_bottom_locked and in_range:
+            self.dvl_last_locked_range = median_range
         dropout = self.rng.random() < float(
             self.get_parameter("dvl_dropout_probability").value
         )
-        valid = in_range and not dropout
+        valid = in_range and geometrically_consistent and self.dvl_bottom_locked and not dropout
+
+        ranges_message = Float64MultiArray()
+        ranges_message.data = ranges
+        self.dvl_beam_pub.publish(ranges_message)
+        altitude_message = Float64()
+        if valid and valid_ranges:
+            beam_angle = math.radians(
+                float(self.get_parameter("dvl_beam_angle_from_vertical_deg").value)
+            )
+            altitude_message.data = float(np.median(valid_ranges) * math.cos(beam_angle))
+        else:
+            altitude_message.data = math.nan
+        self.dvl_altitude_pub.publish(altitude_message)
+
         valid_message = Bool()
         valid_message.data = valid
         self.dvl_valid_pub.publish(valid_message)

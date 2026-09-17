@@ -64,6 +64,9 @@ class VelocityController(Node):
             "max_force_y": 3.0,
             "max_force_z": 12.0,
             "max_torque_z": 1.2,
+            # Calibrated vehicle-only term: the model is slightly positively
+            # buoyant.  This is not an environmental depth or route prior.
+            "heave_feedforward": -4.5,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -134,8 +137,11 @@ class VelocityController(Node):
         wrench.force.y = self._pi(
             "sway", errors["sway"], dt, float(self.get_parameter("max_force_y").value)
         )
-        wrench.force.z = self._pi(
-            "heave", errors["heave"], dt, float(self.get_parameter("max_force_z").value)
+        maximum_z = float(self.get_parameter("max_force_z").value)
+        wrench.force.z = clamp(
+            self._pi("heave", errors["heave"], dt, maximum_z)
+            + float(self.get_parameter("heave_feedforward").value),
+            maximum_z,
         )
         wrench.torque.z = self._pi(
             "yaw", errors["yaw"], dt, float(self.get_parameter("max_torque_z").value)

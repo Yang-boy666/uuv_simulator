@@ -15,10 +15,18 @@
       z: -4.0
       yaw: 0.0
     reference_waypoints:
-      # Flattened [x, y, z, yaw] control points for the future follower.
+      # Flattened [x, y, z, yaw] main-route control points.  At the T junction
+      # the planned inspection route continues east; the south branch remains
+      # available for branch-selection experiments.
       values: [-8.5, -5.0, -4.0, 0.0,
                -3.0, -5.0, -4.0, 0.0,
                 0.0, -2.0, -4.0, 1.5707963268,
-                0.0,  4.0, -4.0, 1.5707963268,
-                3.0,  7.0, -4.0, 0.0,
-                8.5,  7.0, -4.0, 0.0]
+                0.0,  0.0, -5.3, 1.5707963268,
+                0.0,  1.0, -5.3, 1.5707963268,
+                0.0,  4.0, -3.2, 1.5707963268,
+                3.0,  7.0, -3.2, 0.0,
+                5.25, 7.0, -3.2, 0.0,
+                8.5,  7.0, -3.2, 0.0]
+    t_branch_waypoints:
+      values: [5.25, 7.0, -3.2, -1.5707963268,
+               5.25, 2.5, -3.2, -1.5707963268]

@@ -8,6 +8,9 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     enable_svin = LaunchConfiguration("enable_svin")
+    feature_view = LaunchConfiguration("feature_view")
+    fusion_view = LaunchConfiguration("fusion_view")
+    reconstruction = LaunchConfiguration("reconstruction")
     sensor_config = PathJoinSubstitution(
         [FindPackageShare("project3_sensors"), "config", "sensors.yaml"]
     )
@@ -57,6 +60,9 @@ def generate_launch_description():
     return LaunchDescription(
         [
             DeclareLaunchArgument("enable_svin", default_value="true"),
+            DeclareLaunchArgument("feature_view", default_value="true"),
+            DeclareLaunchArgument("fusion_view", default_value="true"),
+            DeclareLaunchArgument("reconstruction", default_value="true"),
             SetEnvironmentVariable("ROS_LOG_DIR", "/tmp/ros_logs_pipeline_svin"),
             Node(
                 package="project3_sensors",
@@ -79,8 +85,65 @@ def generate_launch_description():
                 parameters=[sensor_config],
                 output="screen",
             ),
+            Node(
+                package="project3_sensors",
+                executable="orb_stereo_visualizer",
+                name="orb_stereo_visualizer",
+                parameters=[{"use_sim_time": True}],
+                condition=IfCondition(enable_svin),
+                output="screen",
+            ),
+            Node(
+                package="project3_sensors",
+                executable="stereo_perception",
+                name="stereo_perception",
+                parameters=[{"use_sim_time": True}],
+                condition=IfCondition(enable_svin),
+                output="screen",
+            ),
+            Node(
+                package="project3_sensors",
+                executable="fusion_dashboard",
+                name="fusion_dashboard",
+                parameters=[{"use_sim_time": True}],
+                output="screen",
+            ),
+            Node(
+                package="project3_sensors",
+                executable="stereo_pipe_reconstructor",
+                name="stereo_pipe_reconstructor",
+                parameters=[{"use_sim_time": True}],
+                condition=IfCondition(reconstruction),
+                output="screen",
+            ),
             # Let Gazebo publish clock and initial sensor samples before SVIn starts.
             TimerAction(period=2.0, actions=[stereo_sync, okvis]),
+            TimerAction(
+                period=4.0,
+                actions=[
+                    Node(
+                        package="rqt_image_view",
+                        executable="rqt_image_view",
+                        name="orb_feature_view",
+                        arguments=["/vision/orb_matches"],
+                        condition=IfCondition(feature_view),
+                        output="screen",
+                    )
+                ],
+            ),
+            TimerAction(
+                period=4.5,
+                actions=[
+                    Node(
+                        package="rqt_image_view",
+                        executable="rqt_image_view",
+                        name="fusion_navigation_view",
+                        arguments=["/navigation/fusion_dashboard"],
+                        condition=IfCondition(fusion_view),
+                        output="screen",
+                    )
+                ],
+            ),
             Node(
                 package="project3_sensors",
                 executable="svin_odom_adapter",
